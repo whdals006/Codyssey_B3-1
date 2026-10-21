@@ -82,3 +82,121 @@ assert linked_list.tail is None
 print("모든 테스트를 통과했습니다.")
 PY
 ```
+
+## 3. 체이닝 방식의 해시맵
+
+### 3-1. 해시맵의 동작 원리
+
+### 3-2. 핵심 코드
+
+1. ① 해시 함수 `_hash()`
+
+    ```python
+    value = (value * 31 + ord(character)) % len(self._buckets)
+    ```
+
+    각 문자의 유니코드 코드 포인트를 이용해 해시값을 계산한다.
+    `31`은 다항식 해싱에 사용하는 상수.
+    마지막에 버킷 개수로 나머지를 구해 유효한 인덱스를 만든다.
+
+2. ② 충돌을 처리하는 `_find_node()`
+
+    ```python
+    current = bucket.head
+
+    while current is not None:
+        if current.data.key == key:
+            return current
+
+        current = current.next
+    ```
+
+    같은 버킷에 여러 키가 있으면 연결 리스트를 순회하며 키를 비교한다.
+    따라서 해시 함수가 같은 위치를 반환해도 서로 다른 키의 값을 구분할 수 있다.
+
+3. ③ 기존 키 덮어쓰기
+
+    `put()`에서 키가 이미 존재하면 새 노드를 만들지 않고 기존 항목의 `value`만 변경한다.
+    따라서 키가 중복 등록되지 않고, 항목 수도 증가하지 않는다.
+
+4. ④ 버킷 확장 `_resize()`
+
+버킷 개수가 변경되면 같은 키라도 새로운 인덱스가 나올 수 있다.
+그러므로 기존 항목을 새 버킷 테이블에 다시 배치해야 하는데, 이를 `ReHashing` 이라고 한다.
+
+해시맵의 `get()`, `put()`, `remove()`는 평균적으로 O(1)을 목표로 하지만, 특정 버킷에 충돌이 집중되면 최악의 경우 O(n)이 될 수 있다.
+
+### 3-3. 기능 테스트
+
+```bash
+python3 - <<'PY'
+from mini_redis.data_structures.hash_map import HashMap
+
+# 1. 해시 충돌 테스트
+hash_map = HashMap(initial_capacity=8)
+
+# 'a'와 'i'는 현재 버킷 8개일 때 같은 인덱스에 배정된다.
+assert hash_map._hash("a") == hash_map._hash("i")
+
+hash_map.put("a", 100)
+hash_map.put("i", 200)
+
+assert hash_map.get("a") == 100
+assert hash_map.get("i") == 200
+assert hash_map.size() == 2
+
+# 2. 기존 키 덮어쓰기 테스트
+old_value = hash_map.put("a", 300)
+
+assert old_value == 100
+assert hash_map.get("a") == 300
+assert hash_map.size() == 2
+
+# 3. 존재 여부와 삭제 테스트
+assert hash_map.contains("a") is True
+assert hash_map.contains("missing") is False
+
+removed_value = hash_map.remove("i")
+
+assert removed_value == 200
+assert hash_map.contains("i") is False
+assert hash_map.size() == 1
+
+# 존재하지 않는 키를 삭제하면 None
+assert hash_map.remove("missing") is None
+
+# 4. 로드 팩터 초과 시 버킷 확장 테스트
+resizing_map = HashMap(initial_capacity=8)
+
+for number in range(7):
+    resizing_map.put(f"key-{number}", number)
+
+# 7 / 8 = 0.875이므로 버킷이 8개에서 16개로 늘어나야 한다.
+assert len(resizing_map._buckets) == 16
+
+# 확장 이후에도 모든 항목이 유지되는지 확인한다.
+for number in range(7):
+    assert resizing_map.get(f"key-{number}") == number
+
+assert resizing_map.size() == 7
+assert len(resizing_map.keys()) == 7
+
+print("모든 해시맵 테스트를 통과했습니다.")
+PY
+```
+
+## 4. 최소 힙 (Min_Heap)
+
+### 4-1. 최소 힙의 동작 원리
+
+### 4-2. 최소 힙의 주요 연산
+
+| 메서드 | 기능 | 시간 복잡도 |
+| :--- | :--- | :--- |
+| `push()` | 새 항목 추가 | O(log n) |
+| `pop()` | 최소값 제거 및 반환 | O(log n) |
+| `peek()` | 최소값 확인 | O(1) |
+| `size()` | 항목 개수 반환 | O(1) |
+
+`push()`와 `pop()`은 힙의 규칙을 유지하기 위해 부모,자식 노드를 비교하면서 위치를 조정한다.
+
