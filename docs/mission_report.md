@@ -200,3 +200,90 @@ PY
 
 `push()`와 `pop()`은 힙의 규칙을 유지하기 위해 부모,자식 노드를 비교하면서 위치를 조정한다.
 
+### 4-3. 핵심 코드 이해하기
+
+1. ① `push()`와 `_heapify_up()`
+
+    새 항목을 배열 맨 끝에 추가한 뒤 부모와 비교한다.
+    새 항목이 부모보다 작으면 두 항목의 위치를 바꾸는 과정을 반복
+
+    ```python
+    parent = (index - 1) // 2
+    ```
+
+    배열 인덱스가 `index`인 노드의 부모 인덱스를 계산하는 공식
+
+2. ② `pop()`과 `_heapify_down()`
+
+    최소값인 Root항목을 반환하고, 마지막 항목을 Root로 옮긴다. 그 후 자식 중 더 작은 항목과 비교하면서 Heap 규칙을 반복한다.
+
+    왼쪽 자식과 오른쪽 자식의 인덱스는 아래와 같다.
+
+    ```python
+    left = index * 2 + 1
+    right = index * 2 + 2
+    ```
+
+3. ③ 왜 배열로 구현할까?
+
+    합은 완전 이진 트리 형태를 유지하므로, 포인터를 가진 트리 노드를 만들지 않고도 리스트 인덱스로 부모와 자식을 계산할 수 있다.
+
+    여기서 리스트는 Heap 내부 항목을 저장하는 Array 역할을 한다.
+
+### 4-4. 최소 힙 테스트
+
+```bash
+python3 - <<'PY'
+from mini_redis.data_structures.min_heap import MinHeap
+
+heap = MinHeap()
+
+# 1. 빈 힙 확인
+assert heap.size() == 0
+assert heap.peek() is None
+assert heap.pop() is None
+
+# 2. 숫자 삽입 테스트
+for number in [7, 3, 10, 1, 5]:
+    heap.push(number)
+
+assert heap.size() == 5
+assert heap.peek() == 1
+
+# 3. 최솟값 순서대로 꺼내지는지 확인
+result = []
+
+while heap.size() > 0:
+    result.append(heap.pop())
+
+assert result == [1, 3, 5, 7, 10]
+assert heap.size() == 0
+
+# 4. TTL 항목 테스트
+ttl_heap = MinHeap()
+
+ttl_heap.push((105.0, "user:1"))
+ttl_heap.push((102.0, "user:2"))
+ttl_heap.push((108.0, "user:3"))
+
+assert ttl_heap.peek() == (102.0, "user:2")
+assert ttl_heap.pop() == (102.0, "user:2")
+assert ttl_heap.pop() == (105.0, "user:1")
+assert ttl_heap.pop() == (108.0, "user:3")
+assert ttl_heap.pop() is None
+
+# 5. 만료 시각이 같은 경우 키 이름으로 비교되는지 확인
+same_time_heap = MinHeap()
+
+same_time_heap.push((200.0, "user:3"))
+same_time_heap.push((200.0, "user:1"))
+same_time_heap.push((200.0, "user:2"))
+
+assert same_time_heap.pop() == (200.0, "user:1")
+assert same_time_heap.pop() == (200.0, "user:2")
+assert same_time_heap.pop() == (200.0, "user:3")
+
+print("모든 최소 힙 테스트를 통과했습니다.")
+PY
+```
+
