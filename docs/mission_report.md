@@ -286,4 +286,170 @@ assert same_time_heap.pop() == (200.0, "user:3")
 print("모든 최소 힙 테스트를 통과했습니다.")
 PY
 ```
+## 5. 저장소 엔진 구현
 
+* `해시맵`: key를 이용해 데이터를 조회하고 저장
+* `이중 연결 리스트`: 최근 사용 순서를 추적해 LRU 제거
+* `최소 힙`: 만료 시각이 빠른 TTL 항목을 확인
+
+위 세가지 자료구조를 결합해 Mini Redis의 핵심인 저장소 엔진을 구현한다.
+
+### 5-1. 저장소 엔진의 구조 이해하기
+
+### 5-2. 중요 코드 이해하기
+
+1. ① 메모리 사용량 계산
+
+    ```python
+    entry_size = self._utf8_size(key) + self._utf8_size(value)
+    ```
+
+    메모리 사용량은 key와 value의 UTF-8 byte 수를 합산해서 계산한다.
+
+    예를 들어 아래의 데이터라면,
+
+    ```
+    key = "a"
+    value = "한"
+    ```
+
+    * `"a"`는 UFT-8 기준 1 Byte
+    * `"한"`는 UTF-8 기준 3 Byte
+    * 총 사용량은 4 Byte
+
+    Python의 `len("한")`은 문자 수인 `1`을 반환하지만, `len("한".encode("utf-8"))`은 Byte 수인 `3`을 반환한다.
+
+2. ② LRU 추적
+
+    새 key를 저장할 때는 LRU 목록의 맨 앞에 넣는다.
+
+    ```python
+    new_entry.lru_node = self._lru.insert_front(key)
+    ```
+
+    GET이 성공했을 때도 해당 Node를 맨 앞으로 이동시킨다.
+
+    ```python
+    self._lru.move_to_front(entry.lru_node)
+    ```
+
+    따라서 LRU 목록의 맨 앞은 가장 최근에 사용한 key이고, 맨 뒤에 `tail`은 가장 오랫동안 사용하지 않은 key가 된다.
+
+    메모리 제한을 초과하면 다음 코드가 `tail`부터 제거한다.
+
+    ```python
+    oldest_node = self._lru.tail
+    self._remove_entry(oldest_node.data, evicted=True)
+    ```
+
+3. ③ TTL 만료 처리
+
+    `expire()`는 현재 시각에 만료까지 남은 초를 더해 만료 시각을 만들고, 최소 heap에 `(expire_at, key)` 형태로 넣는다.
+
+    ```python
+    expire_at = time.time() + seconds
+    entry.expire_at = expire_at
+    self._expiry_heap.push((expire_at, key))
+    ```
+
+    `_pruge_expired()`는 heap의 root에서 만료 시각이 지난 항목을 확인한다.
+    단, 이전 TTL이 heap에 남아 있더라도 현재 엔트리의 만료 시각과 다르면 무시한다. 따라서 TTL을 재설정하거나 key를 삭제한 뒤에도 오래된 heap 항목이 새 데이터를 잘못 삭제하지 않는다.
+
+4. ④ 공통 삭제 처리
+
+    `_remove_entry()`는 데이터만 제거하는 것이 아니라, 아래의 작업도 함께 수행한다.
+
+    * Hash Map에서 key 삭제
+    * LRU 목록에서 Node 삭제
+    * `used_memory` 감소
+    * LRU로 제거한 경우에만 `evicted_keys` 증가
+
+    이 공통 함수를 사용하는 이유는 삭제 경로마다 메모리나 LRU 정보가 서로 다르게 남는 오류를 방지하기 위해서이다.
+
+### 5-3. 저장소 엔진 테스트
+
+```bash
+python3 - <<'PY'
+import time
+
+from mini_redis.storage import MiniRedisStore
+
+# 1. 기본 저장 및 조회, UTF-8 메모리 계산
+store = MiniRedisStore()
+
+assert store.set("한", "글") is True
+assert store.get("한") == "글"
+
+# "한" 3바이트 + "글" 3바이트
+assert store.used_memory == 6
+assert store.dbsize() == 1
+
+# 2. 삭제 시 메모리 사용량 갱신
+assert store.delete("한") is True
+assert store.used_memory == 0
+assert store.dbsize() == 0
+
+# 3. LRU 제거 테스트
+store.set_maxmemory(7)
+
+assert store.set("a", "1") is True   # 2바이트
+assert store.set("b", "22") is True  # 3바이트
+
+# a를 최근 사용 키로 만든다.
+assert store.get("a") == "1"
+
+# c를 저장하면 총 9바이트가 되어 가장 오래된 b가 제거된다.
+assert store.set("c", "333") is True
+
+assert store.get("b") is None
+assert store.get("a") == "1"
+assert store.get("c") == "333"
+
+assert store.used_memory == 6
+assert store.evicted_keys == 1
+
+# 4. 단일 항목이 메모리 제한보다 크면 OOM 처리
+oom_store = MiniRedisStore()
+oom_store.set_maxmemory(3)
+
+assert oom_store.set("long", "x") is False
+assert oom_store.dbsize() == 0
+assert oom_store.used_memory == 0
+
+# 5. TTL 없는 키와 존재하지 않는 키 확인
+ttl_store = MiniRedisStore()
+
+assert ttl_store.set("item", "old") is True
+assert ttl_store.ttl("item") == -1
+assert ttl_store.expire("missing", 10) is False
+
+# 6. TTL 설정
+assert ttl_store.expire("item", 30) is True
+
+remaining = ttl_store.ttl("item")
+assert 0 <= remaining <= 30
+
+# 7. SET으로 덮어쓰면 TTL이 초기화된다.
+assert ttl_store.set("item", "new") is True
+assert ttl_store.ttl("item") == -1
+
+# 이전 TTL 항목은 현재 엔트리를 삭제하면 안 된다.
+ttl_store._purge_expired(now=time.time() + 60)
+assert ttl_store.get("item") == "new"
+
+# 8. 정상적인 TTL 만료 확인
+assert ttl_store.set("temp", "v") is True
+assert ttl_store.expire("temp", 10) is True
+
+ttl_store._purge_expired(now=time.time() + 20)
+
+assert ttl_store.get("temp") is None
+assert ttl_store.ttl("temp") == -2
+
+# 9. TTL 0은 즉시 삭제
+assert ttl_store.expire("item", 0) is True
+assert ttl_store.ttl("item") == -2
+
+print("모든 저장소 엔진 테스트를 통과했습니다.")
+PY
+```
