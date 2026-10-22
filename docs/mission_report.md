@@ -7,7 +7,15 @@
 ```md
 /B3-1
 └── mini_redis/
+    ├── __init__.py
+    ├── command_parser.py
+    ├── command_processor.py
+    ├── storage.py
     └── data_structures/
+        ├── __init__.py
+        ├── doubly_linked_list.py
+        ├── hash_map.py
+        └── min_heap.py
 ```
 
 ## 2. 이중 연결 리스트
@@ -590,3 +598,48 @@ assert processor.execute(["EXPIRE", "temp", "abc"]) == (
 print("모든 명령어 처리 테스트를 통과했습니다.")
 PY
 ```
+
+## 7. CLI 완성
+
+### 7-1. main.py 의 역할
+
+- CLI의 시작점
+
+### 7-2. 전체 테스트
+
+```bash
+python3 -m mini_redis.main <<'EOF'
+CONFIG SET maxmemory 30
+SET user:1 "Alice"
+SET user:2 "Bob"
+GET user:1
+SET user:3 "Charlie"
+INFO memory
+EXISTS user:2
+KEYS
+EXPIRE user:1 0
+GET user:1
+TTL user:1
+SET oversize abcdefghijklmnopqrstuvwxyz
+GET
+HELLO
+quit
+EOF
+```
+
+* 결과 확인
+
+| 테스트 | 기대 결과 |
+| :--- | :--- |
+| `CONFIG SET maxmemory 30` | `OK` |
+| `SET user:1 "Alice"` | `OK` |
+| `GET user:1` | `"Alice"` |
+| `SET user:3 "Charlie"` 이후	| LRU에 따라 `user:2` 제거 |
+| `INFO memory` | `used_memory:24`, `maxmemory:30`, `evicted_keys:1` |
+| `EXISTS user:2` | `(integer) 0` |
+| `EXPIRE user:1 0` | `(integer) 1` |
+| `GET user:1` | `(nil)` |
+| `TTL user:1` | `(integer) -2` |
+| 단일 항목 OOM	| `(error) OOM command not allowed when used_memory > 'maxmemory'` |
+| 인자 없는 `GET` | 인자 개수 오류 |
+| `HELLO`	| 알 수 없는 명령어 오류 |
