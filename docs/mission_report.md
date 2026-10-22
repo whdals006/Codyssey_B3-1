@@ -1,4 +1,4 @@
-#
+# Mini Redis 만들기
 
 ## 1. 프로젝트 기본 구조 만들기
 
@@ -451,5 +451,142 @@ assert ttl_store.expire("item", 0) is True
 assert ttl_store.ttl("item") == -2
 
 print("모든 저장소 엔진 테스트를 통과했습니다.")
+PY
+```
+
+## 6. Redis 명령어 구현
+
+### 6-1. `command_parser.py` 의 역할
+
+- 입력 문자열을 명령어와 인자로 분리하는 역할
+
+- `split()`을 사용하면 공백을 기준으로 분리되지만, `shlex.split()`은 따옴표를 고려해서 분리한다.
+
+```bash
+SET greeting "hello world"
+```
+
+를 `split()`으로 분리하면 `"hello`와 `world"`로 분리되지만,
+`shlex.split()`으로 분리하면 따옴표를 고려해서 `"hello world"`로 분리된다.
+
+### 6-2. `command_processor.py` 의 역할
+
+명령어를 직접 파싱하는 대신, 파싱된 argument 목록을 받아 실행하는 역할.
+
+예를 들어서,
+
+```
+SET user:` "Alice"
+```
+
+command_parser.py는 ["SET", "user:1", "Alice"]를 반환하고,
+
+command_processor는 storage.py의 `set()` 메서드를 호출한다.
+
+| 명령어 | storage method | 정상적인 응답 형식 |
+| :--- | :--- | :--- |
+| `SET` | `set()` | `OK` |
+| `GET` | `get()` | `"Alice"` 또는 `(nil)` |
+| `DEL` | `delete()` | `(integr) 1` 또는 `(integer) 0` |
+| `EXISTS` | `exists()` | `(integer) 1` 또는 `(integer) 0` |
+| `DBSIZE` | `dbsize()` | `(integer) N` |
+| `KEYS` | `keys()` | key 목록 또는 `(emty array)` |
+| `CONFIG SET maxmemory` | `set_maxmemory()` | `OK` 또는 오류 |
+| `INFO memory` | `info_memory()` | 메모리 정보 |
+| `EXPIRE` | `expire()` | `(integer) 1` 또는 `(integer) 0` |
+| `TTL` | `ttl()` | 남은 초, `-1` 또는 `-2` |
+
+`_parse_integer()`는 메모리 제한이나 만료 시간처럼 정수가 필요한 입력을 검증한다. 숫자가 아니거나 64비트 부호 정수 범위를 벗어난 입력은 지정된 오류 메세지로 처리한다.
+
+### 6-3. 테스트
+
+```python
+python3 - <<'PY'
+from mini_redis.command_parser import parse_command
+from mini_redis.command_processor import CommandProcessor
+from mini_redis.storage import MiniRedisStore
+
+# 1. 따옴표와 공백이 포함된 값 파싱
+assert parse_command('SET greeting "hello world"') == [
+    "SET", "greeting", "hello world"
+]
+
+assert parse_command("GET greeting") == ["GET", "greeting"]
+
+# 2. 잘못된 따옴표 처리
+try:
+    parse_command('SET key "unfinished')
+except ValueError:
+    pass
+else:
+    raise AssertionError("잘못된 따옴표가 감지되지 않았습니다.")
+
+store = MiniRedisStore()
+processor = CommandProcessor(store)
+
+# 3. 기본 String 명령어
+assert processor.execute(["SET", "name", "Alice Smith"]) == "OK"
+assert processor.execute(["GET", "name"]) == '"Alice Smith"'
+assert processor.execute(["EXISTS", "name"]) == "(integer) 1"
+assert processor.execute(["DBSIZE"]) == "(integer) 1"
+assert processor.execute(["KEYS"]) == '1) "name"'
+
+assert processor.execute(["GET", "missing"]) == "(nil)"
+assert processor.execute(["EXISTS", "missing"]) == "(integer) 0"
+assert processor.execute(["DEL", "name"]) == "(integer) 1"
+assert processor.execute(["DEL", "name"]) == "(integer) 0"
+assert processor.execute(["DBSIZE"]) == "(integer) 0"
+assert processor.execute(["KEYS"]) == "(empty array)"
+
+# 4. 메모리 설정과 OOM 처리
+assert processor.execute(
+    ["CONFIG", "SET", "maxmemory", "4"]
+) == "OK"
+
+assert processor.execute(["SET", "long", "x"]) == (
+    "(error) OOM command not allowed when used_memory > 'maxmemory'"
+)
+
+assert processor.execute(
+    ["CONFIG", "SET", "maxmemory", "abc"]
+) == "(error) ERR value is not an integer or out of range"
+
+assert processor.execute(
+    ["CONFIG", "SET", "maxmemory", "-1"]
+) == "(error) ERR value is not an integer or out of range"
+
+# 5. TTL 설정과 SET 덮어쓰기 시 초기화
+assert processor.execute(
+    ["CONFIG", "SET", "maxmemory", "20"]
+) == "OK"
+
+assert processor.execute(["SET", "temp", "x"]) == "OK"
+assert processor.execute(["EXPIRE", "temp", "30"]) == "(integer) 1"
+
+ttl_result = int(processor.execute(["TTL", "temp"]).split()[-1])
+assert 0 <= ttl_result <= 30
+
+assert processor.execute(["EXPIRE", "missing", "30"]) == "(integer) 0"
+assert processor.execute(["SET", "temp", "new"]) == "OK"
+assert processor.execute(["TTL", "temp"]) == "(integer) -1"
+
+# 6. INFO memory
+info = processor.execute(["INFO", "memory"])
+assert "used_memory:7" in info
+assert "maxmemory:20" in info
+assert "evicted_keys:0" in info
+
+# 7. 오류 처리
+assert processor.execute(["GET"]) == (
+    "(error) ERR wrong number of arguments for 'get' command"
+)
+assert processor.execute(["HELLO"]) == (
+    "(error) ERR unknown command 'HELLO'"
+)
+assert processor.execute(["EXPIRE", "temp", "abc"]) == (
+    "(error) ERR value is not an integer or out of range"
+)
+
+print("모든 명령어 처리 테스트를 통과했습니다.")
 PY
 ```
